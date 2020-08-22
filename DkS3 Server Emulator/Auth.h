@@ -1,3 +1,4 @@
+#pragma once
 #ifndef AUTHSERVER_HEADER_FILE
 #define AUTHSERVER_HEADER_FILE
 
@@ -16,6 +17,46 @@
 #include "RSA.h"
 #include "Frpg2RequestMessage.pb.h"
 
+namespace AuthServer {
+
+	typedef struct authclient_t {
+		// Various libevent variables we use
+		intptr_t fd;
+		struct bufferevent *buf_ev;
+		struct evbuffer *input_buffer;
+		struct evbuffer *output_buffer;
+
+		// Connection state
+		enum ConnectionStatus connectionstatus;
+
+		// Symmetrical encryption data
+		char aescwckey[17]; // 128 bit key + null terminator
+		cwc_ctx cwcctx;
+
+		char unknown1[11]; // Unknown 11 bytes sent by server to client after receiving AES CWC. No fucking clue what they do or if they are even used.
+		char unknown2[16]; // Some kind of key that gets negotiated between a connecting client and the server. Likely related to steam ticket authorisation
+
+		// details sent by connecting clients
+		char steamidstring[17];
+		int clientversion;
+		int clientcounter; 	// counter used for things
+
+	} authclient_t;
+
+	extern void Initialise();
+	void OnAcceptConnection(struct evconnlistener *listener, evutil_socket_t fd, struct sockaddr *address, int socklen, void *ctx);
+	void OnAcceptError(struct evconnlistener *listener, void *ctx);
+	void OnBuffereventRead(struct bufferevent *bev, void *ctx);
+	void OnBuffereventArrive(struct bufferevent *bev, short events, void *ctx);
+	void ProcessPacket(authclient_t *clientInstance);
+	int ProcessPacketHeader(authclient_t *clientInstance);
+	int ProcessPacketPayload(authclient_t *clientInstance);
+	int SendGameServerInfo(authclient_t *clientInstance);
+	int SendPacket(authclient_t *clientInstance, unsigned char *payloadBuffer, int payloadSize);
+
+}
+
+/*
 enum ConnectionStatus
 {
 	CONNECTING = 1,
@@ -103,5 +144,5 @@ private:
 	static int SendPacket(authclient_t *pClientInst, char *pPayloadBuffer, int iPayloadSize);
 	static void GenerateRandomBytes(char *pArray, int iNumOfBytes);
 };
-
+*/
 #endif

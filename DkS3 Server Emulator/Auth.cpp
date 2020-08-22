@@ -1,4 +1,79 @@
 #include "Auth.h"
+
+namespace AuthServer {
+
+	bool isInitialised;
+	struct event_base *authEventBase;
+	struct evconnlistener *authListener;
+
+	void Initialise() {
+
+		if (isInitialised) {
+			LOG_ERROR("[AuthServer::Initialise] Tried to re-initialise the login server");
+			return;
+		}
+
+		LOG_PRINT("[AuthServer::Initialise] Starting LoginServer instance");
+		authEventBase = event_base_new();
+		if (authEventBase == NULL) {
+			LOG_ERROR("[AuthServer::Initialise] Couldn't create new event base");
+			return;
+		}
+
+		struct sockaddr_in sin;
+		memset(&sin, 0, sizeof(sin));
+		sin.sin_family = AF_INET;
+		sin.sin_addr.s_addr = htonl(0);
+		sin.sin_port = htons(LOGINPORT);
+
+		authListener = evconnlistener_new_bind(authEventBase, OnAcceptConnection, NULL, LEV_OPT_CLOSE_ON_FREE | LEV_OPT_REUSEABLE, -1, (struct sockaddr*)&sin, sizeof(sin));
+		if (authListener == NULL) {
+			LOG_ERROR("[AuthServer::Initialise] Couldn't create event connection listener");
+			return;
+		}
+		isInitialised = true;
+
+		evconnlistener_set_error_cb(authListener, OnAcceptError);
+		event_base_dispatch(authEventBase);
+	}
+
+	void OnAcceptConnection(struct evconnlistener *listener, evutil_socket_t fd, struct sockaddr *address, int socklen, void *ctx) {
+		struct event_base *base = evconnlistener_get_base(listener);
+		authclient_t *clientInstance;
+		sockaddr_in *clientInfo = (sockaddr_in*)address;
+
+		clientInstance = (authclient_t*)calloc(1, sizeof(authclient_t));
+		if (clientInstance == NULL) {
+			LOG_ERROR("[AuthServer::OnAcceptConnection] Failed to create client instance for %s:%i. Abandoning connection", inet_ntoa(clientInfo->sin_addr), clientInfo->sin_port);
+			return;
+		}
+
+		struct bufferevent *bev = bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
+		clientInstance->fd = fd;
+		clientInstance->buf_ev = bev;
+		clientInstance->input_buffer = bufferevent_get_input(bev);
+		clientInstance->output_buffer = bufferevent_get_output(bev);
+
+		bufferevent_setcb(bev, OnBuffereventRead, NULL, OnBuffereventArrive, clientInstance);
+		bufferevent_enable(bev, EV_READ | EV_WRITE);
+
+		LOG_SUCCESS("[AuthServer::OnAcceptConnection] Accepting connection from: %s:%i", inet_ntoa(clientInfo->sin_addr), clientInfo->sin_port);
+	}
+
+	void OnAcceptError(struct evconnlistener *listener, void *ctx) {
+		struct event_base *base = evconnlistener_get_base(listener);
+		int errorCode = EVUTIL_SOCKET_ERROR();
+
+		LOG_ERROR("[AuthServer::OnAcceptError] Got error code: %i (%s), on the listener. Shutting down", errorCode, evutil_socket_error_to_string(errorCode));
+		event_base_loopexit(base, NULL);
+	}
+
+	void OnBuffereventRead(struct bufferevent *bev, void *ctx) {
+		threadPool.enqueue_work(ProcessPacket, (authclient_t*)ctx);
+	}
+}
+
+
 /*
 AuthServer::AuthServer()
 {
