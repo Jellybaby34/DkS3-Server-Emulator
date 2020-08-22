@@ -1,0 +1,11 @@
+#pragma once
+#ifndef CONSTANTS_HEADER_FILE
+#define CONSTANTS_HEADER_FILE
+
+#define FUNCTION_SUCCESS 0
+#define FUNCTION_ERROR -1
+#define SERVERIP "127.0.0.1"
+#define LOGINPORT 50050
+#define AUTHPORT 50000
+
+#endif

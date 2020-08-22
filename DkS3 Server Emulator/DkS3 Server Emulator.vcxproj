@@ -104,13 +104,39 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
+      <DisableSpecificWarnings>4996</DisableSpecificWarnings>
+      <AdditionalIncludeDirectories>C:\Users\TechnicolourDreambox\Desktop\Junk\D3D11 dll projects\DkS3 Server Emulator\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
+      <AdditionalLibraryDirectories>C:\Users\TechnicolourDreambox\Desktop\Junk\D3D11 dll projects\DkS3 Server Emulator\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>libevent.lib;libssl.lib;libcrypto.lib;libprotobuf-lite.lib;aes.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <IgnoreSpecificDefaultLibraries>MSVCRT</IgnoreSpecificDefaultLibraries>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="Auth.cpp" />
+    <ClCompile Include="cwc.c" />
+    <ClCompile Include="Frpg2RequestMessage.pb.cc" />
+    <ClCompile Include="Game.cpp" />
+    <ClCompile Include="Logging.cpp" />
+    <ClCompile Include="Login.cpp" />
+    <ClCompile Include="main.cpp" />
+    <ClCompile Include="RSA.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Auth.h" />
+    <ClInclude Include="Constants.h" />
+    <ClInclude Include="Frpg2RequestMessage.pb.h" />
+    <ClInclude Include="Game.h" />
+    <ClInclude Include="Logging.h" />
+    <ClInclude Include="Login.h" />
+    <ClInclude Include="main.h" />
+    <ClInclude Include="RSA.h" />
+    <ClInclude Include="stdafx.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

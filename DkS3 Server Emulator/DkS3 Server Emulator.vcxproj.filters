@@ -13,5 +13,78 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="Source Files\Logging">
+      <UniqueIdentifier>{59670087-4820-4225-b5f3-59eec097011e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Connections">
+      <UniqueIdentifier>{da6bdb4f-fae9-4db2-ab92-8acaf12a146b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Connections\Login">
+      <UniqueIdentifier>{4a28a9bd-61e2-4fe3-865c-8a7e43e19eed}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Connections\Game">
+      <UniqueIdentifier>{72138275-191d-4f81-a6ab-6cf63cc29f87}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Protobuf">
+      <UniqueIdentifier>{8c600a10-07b7-4b88-9559-f7d4257dd729}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Encryption">
+      <UniqueIdentifier>{7d75a119-5d1a-4aad-afa3-0806481c07a6}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="main.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Logging.cpp">
+      <Filter>Source Files\Logging</Filter>
+    </ClCompile>
+    <ClCompile Include="RSA.cpp">
+      <Filter>Source Files\Encryption</Filter>
+    </ClCompile>
+    <ClCompile Include="Login.cpp">
+      <Filter>Source Files\Connections\Login</Filter>
+    </ClCompile>
+    <ClCompile Include="Auth.cpp">
+      <Filter>Source Files\Connections\Login</Filter>
+    </ClCompile>
+    <ClCompile Include="Game.cpp">
+      <Filter>Source Files\Connections\Game</Filter>
+    </ClCompile>
+    <ClCompile Include="Frpg2RequestMessage.pb.cc">
+      <Filter>Source Files\Protobuf</Filter>
+    </ClCompile>
+    <ClCompile Include="cwc.c">
+      <Filter>Source Files\Encryption</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="main.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Logging.h">
+      <Filter>Source Files\Logging</Filter>
+    </ClInclude>
+    <ClInclude Include="RSA.h">
+      <Filter>Source Files\Encryption</Filter>
+    </ClInclude>
+    <ClInclude Include="Constants.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="stdafx.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Login.h">
+      <Filter>Source Files\Connections\Login</Filter>
+    </ClInclude>
+    <ClInclude Include="Auth.h">
+      <Filter>Source Files\Connections\Login</Filter>
+    </ClInclude>
+    <ClInclude Include="Game.h">
+      <Filter>Source Files\Connections\Game</Filter>
+    </ClInclude>
+    <ClInclude Include="Frpg2RequestMessage.pb.h">
+      <Filter>Source Files\Protobuf</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
