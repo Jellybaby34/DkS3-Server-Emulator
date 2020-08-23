@@ -48,7 +48,7 @@ void StartServer()
 
 	threadPool.enqueue_work(LoginServer::Initialise);
 	Sleep(500);
-//	threadPool.enqueue_work(AuthServer::GetInstance);
+	threadPool.enqueue_work(AuthServer::Initialise);
 	Sleep(500);
 
 }

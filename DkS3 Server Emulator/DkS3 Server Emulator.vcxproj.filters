@@ -87,4 +87,9 @@
       <Filter>Source Files\Protobuf</Filter>
     </ClInclude>
   </ItemGroup>
+  <ItemGroup>
+    <None Include="..\protobuf\Frpg2RequestMessage.proto">
+      <Filter>Source Files\Protobuf</Filter>
+    </None>
+  </ItemGroup>
 </Project>

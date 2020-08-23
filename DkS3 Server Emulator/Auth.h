@@ -19,6 +19,14 @@
 
 namespace AuthServer {
 
+	enum ConnectionStatus {
+		INITIALISE_AESCWC = 1,
+		AES_INITIALISED = 2,
+		HANDSHAKE = 3,
+		GET_SERVICE_STATUS = 4,
+		EXCHANGE_STEAM_TICKET = 5,
+	};
+
 	typedef struct authclient_t {
 		// Various libevent variables we use
 		intptr_t fd;
@@ -30,17 +38,16 @@ namespace AuthServer {
 		enum ConnectionStatus connectionstatus;
 
 		// Symmetrical encryption data
-		char aescwckey[17]; // 128 bit key + null terminator
+		unsigned char aescwckey[17]; // 128 bit key + null terminator
 		cwc_ctx cwcctx;
 
-		char unknown1[11]; // Unknown 11 bytes sent by server to client after receiving AES CWC. No fucking clue what they do or if they are even used.
-		char unknown2[16]; // Some kind of key that gets negotiated between a connecting client and the server. Likely related to steam ticket authorisation
+		unsigned char unknown1[11]; // Unknown 11 bytes sent by server to client after receiving AES CWC. No fucking clue what they do or if they are even used.
+		unsigned char unknown2[16]; // Some kind of key that gets negotiated between a connecting client and the server. Likely related to steam ticket authorisation
 
 		// details sent by connecting clients
 		char steamidstring[17];
 		int clientversion;
 		int clientcounter; 	// counter used for things
-
 	} authclient_t;
 
 	extern void Initialise();
@@ -50,10 +57,16 @@ namespace AuthServer {
 	void OnBuffereventArrive(struct bufferevent *bev, short events, void *ctx);
 	void ProcessPacket(authclient_t *clientInstance);
 	int ProcessPacketHeader(authclient_t *clientInstance);
-	int ProcessPacketPayload(authclient_t *clientInstance);
-	int SendGameServerInfo(authclient_t *clientInstance);
-	int SendPacket(authclient_t *clientInstance, unsigned char *payloadBuffer, int payloadSize);
-
+//	int ProcessPacketPayload(authclient_t *clientInstance);
+//	int SendGameServerInfo(authclient_t *clientInstance);
+	int SendPacket(authclient_t *clientInstance, char *payloadBuffer, int payloadLength);
+	int InitialiseCWCInstance(authclient_t *clientInstance);
+	int EncryptCWCPacket(authclient_t *clientInstance, unsigned char *payloadBuffer, int payloadLength);
+	int DecryptCWCPacket(authclient_t *clientInstance, unsigned char *decryptedPayloadBuffer);
+	void GenerateRandomBytes(unsigned char *byteArray, int arrayLength);
+	int GetServiceStatus(authclient_t *clientInstance);
+	int BeginHandshake(authclient_t *clientInstance);
+	int ValidateSteamSessionTicket(authclient_t *clientInstance);
 }
 
 /*

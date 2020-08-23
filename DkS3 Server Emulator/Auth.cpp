@@ -9,11 +9,11 @@ namespace AuthServer {
 	void Initialise() {
 
 		if (isInitialised) {
-			LOG_ERROR("[AuthServer::Initialise] Tried to re-initialise the login server");
+			LOG_ERROR("[AuthServer::Initialise] Tried to re-initialise the auth server");
 			return;
 		}
 
-		LOG_PRINT("[AuthServer::Initialise] Starting LoginServer instance");
+		LOG_PRINT("[AuthServer::Initialise] Starting AuthServer instance");
 		authEventBase = event_base_new();
 		if (authEventBase == NULL) {
 			LOG_ERROR("[AuthServer::Initialise] Couldn't create new event base");
@@ -24,7 +24,7 @@ namespace AuthServer {
 		memset(&sin, 0, sizeof(sin));
 		sin.sin_family = AF_INET;
 		sin.sin_addr.s_addr = htonl(0);
-		sin.sin_port = htons(LOGINPORT);
+		sin.sin_port = htons(AUTHPORT);
 
 		authListener = evconnlistener_new_bind(authEventBase, OnAcceptConnection, NULL, LEV_OPT_CLOSE_ON_FREE | LEV_OPT_REUSEABLE, -1, (struct sockaddr*)&sin, sizeof(sin));
 		if (authListener == NULL) {
@@ -53,6 +53,7 @@ namespace AuthServer {
 		clientInstance->buf_ev = bev;
 		clientInstance->input_buffer = bufferevent_get_input(bev);
 		clientInstance->output_buffer = bufferevent_get_output(bev);
+		clientInstance->connectionstatus = ConnectionStatus::INITIALISE_AESCWC;
 
 		bufferevent_setcb(bev, OnBuffereventRead, NULL, OnBuffereventArrive, clientInstance);
 		bufferevent_enable(bev, EV_READ | EV_WRITE);
@@ -71,6 +72,339 @@ namespace AuthServer {
 	void OnBuffereventRead(struct bufferevent *bev, void *ctx) {
 		threadPool.enqueue_work(ProcessPacket, (authclient_t*)ctx);
 	}
+
+	void OnBuffereventArrive(struct bufferevent *bev, short events, void *ctx) {
+		if (events & BEV_EVENT_ERROR)
+			LOG_ERROR("[AuthServer::OnBuffereventArrive] Error from bufferevent");
+
+		if (events & (BEV_EVENT_EOF | BEV_EVENT_ERROR)) {
+			LOG_PRINT("[AuthServer::OnBuffereventArrive] Closing connection");
+			if (ctx != NULL) {
+				free((authclient_t*)ctx);
+				LOG_PRINT("[AuthServer::OnBuffereventArrive] Freed client data struct");
+			}
+			bufferevent_free(bev);
+		}
+
+		if (events & BEV_EVENT_CONNECTED) {
+			LOG_SUCCESS("[AuthServer::OnBuffereventArrive] Client connected");
+		}
+		else if (events & BEV_EVENT_TIMEOUT) {
+			LOG_ERROR("[AuthServer::OnBuffereventArrive] Client connect timed out");
+		}
+	}
+
+	void ProcessPacket(authclient_t *clientInstance)
+	{
+		LOG_PRINT("Received new packet");
+		unsigned char *packetBuffer = evbuffer_pullup(clientInstance->input_buffer, -1);
+		PrintBytes((char*)packetBuffer, evbuffer_get_length(clientInstance->input_buffer));
+
+		if (ProcessPacketHeader(clientInstance) == FUNCTION_ERROR) {
+			LOG_ERROR("[AuthServer::ProcessPacket] Received packet header was invalid");
+			bufferevent_free(clientInstance->buf_ev);
+			return;
+		};
+
+		switch (clientInstance->connectionstatus) {
+			
+			case ConnectionStatus::INITIALISE_AESCWC: {
+				if (InitialiseCWCInstance(clientInstance) == FUNCTION_ERROR) {
+					LOG_ERROR("[AuthServer::ProcessPacket] Failed to initialise client CWC instance");
+					bufferevent_free(clientInstance->buf_ev);
+					return;
+				}
+/*
+				if (SendUnknown11Bytes(pClientInst) == FUNCTION_ERROR) {
+					LOG_ERROR("[AuthServer::ProcessPacket] Failed to send unknown 11 bytes");
+					bufferevent_free(pClientInst->buf_ev);
+					return;
+				}
+*/
+				LOG_PRINT("[AuthServer::SendUnknown11Bytes] Sending unknown 11 bytes");
+				char pEncryptedPayloadBuffer[32] = {};
+				memcpy(pEncryptedPayloadBuffer, clientInstance->unknown1, 11);
+				SendPacket(clientInstance, pEncryptedPayloadBuffer, 27);
+
+				clientInstance->connectionstatus = ConnectionStatus::AES_INITIALISED;
+				return;
+			}
+
+			case ConnectionStatus::AES_INITIALISED: {
+				if (GetServiceStatus(clientInstance) == FUNCTION_ERROR) {
+					LOG_ERROR("[AuthServer::ProcessPacket] Failed to get service status");
+					bufferevent_free(clientInstance->buf_ev);
+					return;
+				}
+
+				clientInstance->connectionstatus = ConnectionStatus::HANDSHAKE;
+				return;
+			}
+
+			case ConnectionStatus::HANDSHAKE: {
+				if (BeginHandshake(clientInstance) == FUNCTION_ERROR) {
+					LOG_ERROR("[AuthServer::ProcessPacket] Failed to handshake");
+					bufferevent_free(clientInstance->buf_ev);
+					return;
+				}
+
+				clientInstance->connectionstatus = ConnectionStatus::EXCHANGE_STEAM_TICKET;
+				return;
+			}
+
+			case ConnectionStatus::EXCHANGE_STEAM_TICKET: {
+				if (ValidateSteamSessionTicket(clientInstance) == FUNCTION_ERROR) {
+					LOG_ERROR("[AuthServer::ProcessPacket] Failed to validate received steam ticket");
+					bufferevent_free(clientInstance->buf_ev);
+					return;
+				}
+			}
+		}
+
+		LOG_PRINT("END PROCESS PACKET");
+	}
+
+	int ProcessPacketHeader(authclient_t *clientInstance) {
+		LOG_PRINT("[AuthServer::ProcessPacketHeader] Processing packet header");
+
+		loginclientpacketheader_t header = {};
+		size_t totalPacketLength = evbuffer_get_length(clientInstance->input_buffer);
+		int headerLength = sizeof(loginclientpacketheader_t);
+
+		if (evbuffer_remove(clientInstance->input_buffer, &header, headerLength) != headerLength) {
+			LOG_ERROR("[LoginServer::ProcessPacketHeader] Failed to parse header from input buffer");
+			return FUNCTION_ERROR;
+		}
+
+		if (ntohs(header.packetLengthType1) != totalPacketLength - 2) {
+			LOG_ERROR("[LoginServer::ProcessPacketHeader] Received length #1 in packet was not as expected. Expected: %i, received: %i", totalPacketLength - 2, ntohs(header.packetLengthType1));
+			return FUNCTION_ERROR;
+		}
+
+		// Clientheader.sentpacketscounter is here which we can do something with if we want.
+
+		if (ntohs(header.unknown1) != 0) {
+			LOG_ERROR("[LoginServer::ProcessPacketHeader] Received unknown #1 in packet was not as expected. Expected: %i, received: %i", 0, ntohs(header.unknown1));
+			return FUNCTION_ERROR;
+		}
+
+		if (ntohl(header.packetLengthType2A) != totalPacketLength - 14) {
+			LOG_ERROR("[LoginServer::ProcessPacketHeader] Received length #2 in packet was not as expected. Expected: %i, received: %i", totalPacketLength - 14, ntohl(header.packetLengthType2A));
+			return FUNCTION_ERROR;
+		}
+
+		if (ntohl(header.packetLengthType2B) != totalPacketLength - 14) {
+			LOG_ERROR("[LoginServer::ProcessPacketHeader] Received length #3 in packet was not as expected. Expected: %i, received: %i", totalPacketLength - 14, ntohl(header.packetLengthType2B));
+			return FUNCTION_ERROR;
+		}
+
+		if (ntohl(header.unknown2) != 0x0C) {
+			LOG_ERROR("[LoginServer::ProcessPacketHeader] Received unknown #2 in packet was not as expected. Expected: %i, received: %i", 0x0C, ntohl(header.unknown2));
+			return FUNCTION_ERROR;
+		}
+
+		if (ntohl(header.unknown3) != 5) {
+			LOG_WARN("[LoginServer::ProcessPacketHeader] Received unknown #3 in packet was not as expected. Expected: %i, received: %i. Continuing", 5, ntohl(header.unknown3));
+		}
+
+		clientInstance->clientcounter = header.receivedCounter;
+		return FUNCTION_SUCCESS;
+	}
+
+	int InitialiseCWCInstance(authclient_t *clientInstance) {
+		unsigned char payloadBuffer[1024];
+		unsigned char receivedDataBuffer[1024];
+
+		size_t receivedDataLength = evbuffer_get_length(clientInstance->input_buffer);
+
+		if (evbuffer_remove(clientInstance->input_buffer, receivedDataBuffer, receivedDataLength) != receivedDataLength) {
+			LOG_ERROR("[AuthServer::InitialiseCWCInstance] Failed to drain buffer.");
+			return FUNCTION_ERROR;
+		}
+
+		int payloadLength = RSADecrypt(receivedDataLength, receivedDataBuffer, payloadBuffer);
+		if (payloadLength < 1) {
+			LOG_ERROR("[AuthServer::InitialiseCWCInstance] Failed to decrypt RSA payload.");
+			return FUNCTION_ERROR;
+		}
+
+		Frpg2RequestMessage::RequestHandshake pbRequestHandshake;
+		if (!pbRequestHandshake.ParseFromArray(payloadBuffer, payloadLength)) {
+			LOG_ERROR("[AuthServer::InitialiseCWCInstance] Failed to parse decrypted packet payload.");
+			return FUNCTION_ERROR;
+		}
+
+		strncpy((char*)clientInstance->aescwckey, pbRequestHandshake.aescwckey().c_str(), 16);
+		if (cwc_init_and_key(clientInstance->aescwckey, 16, &clientInstance->cwcctx) == FUNCTION_ERROR) {
+			LOG_ERROR("[AuthServer::InitialiseCWCInstance] Failed to initialise AES CWC context.");
+			return FUNCTION_ERROR;
+		}
+
+		GenerateRandomBytes(clientInstance->unknown1, 11);
+
+		return FUNCTION_SUCCESS;
+	}
+
+	// This is the pseudo RNG used by DkS3 to generate the AES CWC key each session
+	void GenerateRandomBytes(unsigned char *byteArray, int arrayLength) {
+		std::random_device rd;
+		static std::mt19937 g(rd());
+		std::uniform_int_distribution<> dist(0, 255);
+
+		for (int i = 0; i < arrayLength; i++) {
+			unsigned char randByte = dist(g);
+			byteArray[i] = randByte;
+		}
+	}
+
+	int EncryptCWCPacket(authclient_t *clientInstance, unsigned char *payloadBuffer, int payloadLength) {
+		LOG_PRINT("[AuthServer::EncryptCWCPacket] Encrypting packet with CWC");
+
+		unsigned char packetIV[12] = {}; // 11 bytes at the start are the IV
+		unsigned char packetTag[17] = {}; // 16 bytes at start are the tag computed after encryption but stuck at the front of the packet I think
+		unsigned char encryptedPayload[1024];
+
+		GenerateRandomBytes(packetIV, 11);
+
+		if (cwc_encrypt_message(packetIV, 11, packetIV, 11, payloadBuffer, payloadLength, packetTag, 16, &clientInstance->cwcctx) == FUNCTION_ERROR) {
+			LOG_ERROR("[AuthServer::EncryptCWCPacket] Failed to encrypt packet");
+			return FUNCTION_ERROR;
+		}
+
+		memcpy(encryptedPayload, packetIV, 11);
+		memcpy(&encryptedPayload[11], packetTag, 16);
+		memcpy(&encryptedPayload[27], payloadBuffer, payloadLength);
+
+		return SendPacket(clientInstance, (char*)encryptedPayload, payloadLength + 27);
+	}
+
+	int DecryptCWCPacket(authclient_t *clientInstance, unsigned char *decryptedPayloadBuffer) {
+		LOG_PRINT("[AuthServer::DecryptCWCPacket] Decrypting CWC encrypted packet");
+
+		unsigned char packetIV[12] = {}; // 11 bytes at the start are the IV
+		unsigned char packetTag[17] = {}; // 16 bytes at start are the tag computed after encryption but stuck at the front of the packet I think
+		size_t receivedDataLength = evbuffer_get_length(clientInstance->input_buffer);
+
+		if (evbuffer_remove(clientInstance->input_buffer, packetIV, 11) != 11) {
+			LOG_ERROR("[AuthServer::DecryptCWCPacket] Failed to drain IV");
+			return FUNCTION_ERROR;
+		}
+
+		if (evbuffer_remove(clientInstance->input_buffer, packetTag, 16) != 16) {
+			LOG_ERROR("[AuthServer::DecryptCWCPacket] Failed to drain tag");
+			return FUNCTION_ERROR;
+		}
+
+		if (evbuffer_remove(clientInstance->input_buffer, decryptedPayloadBuffer, receivedDataLength - 27) != receivedDataLength - 27) {
+			LOG_ERROR("[AuthServer::DecryptCWCPacket] Failed to drain payload");
+			return FUNCTION_ERROR;
+		}
+
+//		PrintBytes((char*)packetIV, 11);
+//		PrintBytes((char*)packetTag, 16);
+//		PrintBytes((char*)decryptedPayloadBuffer, receivedDataLength - 27);
+
+		if (cwc_decrypt_message(packetIV, 11, packetIV, 11, decryptedPayloadBuffer, receivedDataLength - 27, packetTag, 16, &clientInstance->cwcctx) == FUNCTION_ERROR) {
+			LOG_ERROR("[AuthServer::DecryptCWCPacket] Failed to decrypt packet");
+			return FUNCTION_ERROR;
+		}
+
+		LOG_PRINT("Decrypted CWC payload");
+		PrintBytes((char*)decryptedPayloadBuffer, receivedDataLength - 27);
+
+		return receivedDataLength - 27;
+	}
+
+	int GetServiceStatus(authclient_t *clientInstance) {
+		unsigned char payloadBuffer[1024];
+		int payloadLength = DecryptCWCPacket(clientInstance, payloadBuffer);
+
+		if (payloadLength < 0) {
+			LOG_ERROR("[AuthServer::GetServiceStatus] Failed to parse CWC payload");
+			return FUNCTION_ERROR;
+		}
+
+		Frpg2RequestMessage::GetServiceStatus pbGetServiceStatus;
+		if (!pbGetServiceStatus.ParseFromArray(payloadBuffer, payloadLength)) {
+			LOG_ERROR("[AuthServer::GetServiceStatus] Failed to parse decrypted packet payload into protobuf format.");
+			return FUNCTION_ERROR;
+		}
+
+		if (pbGetServiceStatus.id() != 1) {
+			LOG_ERROR("[AuthServer::GetServiceStatus] Protobuf packet ID not expected value. Expected: 1, Got: %i", pbGetServiceStatus.id());
+			return FUNCTION_ERROR;
+		}
+
+		strncpy(clientInstance->steamidstring, pbGetServiceStatus.steamid().c_str(), 16);
+		clientInstance->clientversion = pbGetServiceStatus.versionnum();
+
+		Frpg2RequestMessage::GetServiceStatusResponse pbGetServiceStatusResponse;
+		pbGetServiceStatusResponse.set_id(2);
+		pbGetServiceStatusResponse.set_steamid("\x00", 0);
+		pbGetServiceStatusResponse.set_unknownfield(0);
+		pbGetServiceStatusResponse.set_versionnum(0);
+
+		int protobufMsgLength = pbGetServiceStatusResponse.ByteSize();
+		pbGetServiceStatusResponse.SerializeToArray(payloadBuffer, protobufMsgLength);
+
+		//		PrintBytes((char*)payloadBuffer, protobufMsgLength);
+
+		EncryptCWCPacket(clientInstance, payloadBuffer, protobufMsgLength);
+	}
+
+	int BeginHandshake(authclient_t *clientInstance) {
+		unsigned char payloadBuffer[1024];
+		int payloadLength = AuthServer::DecryptCWCPacket(clientInstance, payloadBuffer);
+
+		if (payloadLength < 0) {
+			LOG_ERROR("[AuthServer::BeginHandshake] Failed to parse CWC payload");
+			return FUNCTION_ERROR;
+		}
+
+		memcpy(clientInstance->unknown2, payloadBuffer, 8);
+		GenerateRandomBytes(&clientInstance->unknown2[8], 8);
+
+		return EncryptCWCPacket(clientInstance, clientInstance->unknown2, 16);
+	}
+
+	int ValidateSteamSessionTicket(authclient_t *clientInstance) {
+		LOG_PRINT("Auth Sesh");
+		char *payload = "\x15\x1A\xCD\xAC\x48\xF6\xAB\x72\x31\x32\x37\x2E\x30\x2E\x30\x2E\x31\x00\x00\x00\xE0\x81\x02\xB8\x8D\x7F\x00\x00\x78\x3C\x2B\x01\x00\x00\x00\x00\x26\xE6\x57\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x3E\xC6\x57\x00\x00\x00\x00\x00\x30\x03\x6F\x02\x00\x00\x00\x00\xA4\xBE\x55\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x90\xC0\x89\xC4\x8D\x7F\x00\x00\x30\x03\x6F\x02\x00\x00\x00\x00\x67\x3B\x63\x00\x00\x00\x00\x00\x68\x03\x6F\x02\x00\x00\x00\x00\xE0\x81\x02\xB8\x8D\x7F\x00\x00\x30\x03\x6F\x02\x00\x00\x00\x00\xC3\x51\x00\x00\x00\x00\x80\x00\x00\x00\x80\x00\x00\x00\xA0\x00\x00\x00\xA0\x00\x00\x00\x00\x80\x00\x00\x80\x00\x00\x00\xA0\x00\x00\x04\x93\xE0\x00\x00\x61\xA8\x00\x00\x00\x0C\x00\x00\x00\x00";
+		unsigned char payloadBuffer[1024] = {};
+
+		memcpy(payloadBuffer, payload, 184);
+
+		PrintBytes((char*)payloadBuffer, 184);
+		return AuthServer::EncryptCWCPacket(clientInstance, payloadBuffer, 184);
+	}
+
+	int SendPacket(authclient_t *clientInstance, char *payloadBuffer, int payloadLength) {
+		LOG_PRINT("[AuthServer::SendPacket] Sending packet");
+
+		char packetBuffer[2048];
+		loginserverpacketheader_t packetHeader = {};
+		int totalPacketLength = payloadLength + sizeof(loginserverpacketheader_t);
+
+		packetHeader.packetlengthtype1 = htons(totalPacketLength - 2);
+		packetHeader.packetlengthtype2A = htonl(totalPacketLength - 14);
+		packetHeader.packetlengthtype2B = htonl(totalPacketLength - 14);
+		packetHeader.unknown2 = htonl(0x0C);
+		packetHeader.receivedcounter = clientInstance->clientcounter;
+		packetHeader.unknown5 = htonl(0x01);
+
+		memcpy(packetBuffer, &packetHeader, sizeof(loginserverpacketheader_t));
+		memcpy(&packetBuffer[sizeof(loginserverpacketheader_t)], payloadBuffer, payloadLength);
+
+		PrintBytes(packetBuffer, totalPacketLength);
+
+		if (bufferevent_write(clientInstance->buf_ev, packetBuffer, totalPacketLength) == FUNCTION_ERROR) {
+			LOG_ERROR("[AuthServer::SendPacket] Failed to send packet");
+			return FUNCTION_ERROR;
+		}
+
+		return FUNCTION_SUCCESS;
+	}
+
 }
 
 
