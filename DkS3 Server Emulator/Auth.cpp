@@ -122,9 +122,9 @@ namespace AuthServer {
 				}
 */
 				LOG_PRINT("[AuthServer::SendUnknown11Bytes] Sending unknown 11 bytes");
-				char pEncryptedPayloadBuffer[32] = {};
-				memcpy(pEncryptedPayloadBuffer, clientInstance->unknown1, 11);
-				SendPacket(clientInstance, pEncryptedPayloadBuffer, 27);
+				char encryptedPayloadBuffer[32] = {};
+				memcpy(encryptedPayloadBuffer, clientInstance->unknown1, 11);
+				SendPacket(clientInstance, encryptedPayloadBuffer, 27);
 
 				clientInstance->connectionstatus = ConnectionStatus::AES_INITIALISED;
 				return;
@@ -158,6 +158,18 @@ namespace AuthServer {
 					bufferevent_free(clientInstance->buf_ev);
 					return;
 				}
+
+				// A whole bunch of stack memory gets sent to the client :^)
+				unsigned char payloadBuffer[1024] = {};
+				GenerateRandomBytes(clientInstance->unknown3, 8);
+
+				memcpy(payloadBuffer, clientInstance->unknown3, 8);
+				strncpy((char*)&payloadBuffer[8], SERVERIP, strlen(SERVERIP));
+				char *crap = "\x30\x1F\x07\x74\x9C\x7F\x00\x00\x78\x7C\x2B\x01\x00\x00\x00\x00\xE6\x0F\x58\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xFE\xEF\x57\x00\x00\x00\x00\x00\x30\x93\x77\x02\x00\x00\x00\x00\x64\xE8\x55\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x70\x00\xF9\x81\x9C\x7F\x00\x00\x30\x93\x77\x02\x00\x00\x00\x00\x27\x65\x63\x00\x00\x00\x00\x00\x68\x93\x77\x02\x00\x00\x00\x00\x30\x1F\x07\x74\x9C\x7F\x00\x00\x30\x93\x77\x02\x00\x00\x00\x00\xC3\x51\x00\x00\x00\x00\x80\x00\x00\x00\x80\x00\x00\x00\xA0\x00\x00\x00\xA0\x00\x00\x00\x00\x80\x00\x00\x80\x00\x00\x00\xA0\x00\x00\x04\x93\xE0\x00\x00\x61\xA8\x00\x00\x00\x0C\x00\x00\x00\x00";
+				memcpy(&payloadBuffer[24], crap, 161);
+				PrintBytes((char*)payloadBuffer, 184);
+
+				EncryptCWCPacket(clientInstance, payloadBuffer, 184);
 			}
 		}
 
@@ -354,7 +366,7 @@ namespace AuthServer {
 
 	int BeginHandshake(authclient_t *clientInstance) {
 		unsigned char payloadBuffer[1024];
-		int payloadLength = AuthServer::DecryptCWCPacket(clientInstance, payloadBuffer);
+		int payloadLength = DecryptCWCPacket(clientInstance, payloadBuffer);
 
 		if (payloadLength < 0) {
 			LOG_ERROR("[AuthServer::BeginHandshake] Failed to parse CWC payload");
@@ -368,14 +380,8 @@ namespace AuthServer {
 	}
 
 	int ValidateSteamSessionTicket(authclient_t *clientInstance) {
-		LOG_PRINT("Auth Sesh");
-		char *payload = "\x15\x1A\xCD\xAC\x48\xF6\xAB\x72\x31\x32\x37\x2E\x30\x2E\x30\x2E\x31\x00\x00\x00\xE0\x81\x02\xB8\x8D\x7F\x00\x00\x78\x3C\x2B\x01\x00\x00\x00\x00\x26\xE6\x57\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x3E\xC6\x57\x00\x00\x00\x00\x00\x30\x03\x6F\x02\x00\x00\x00\x00\xA4\xBE\x55\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x90\xC0\x89\xC4\x8D\x7F\x00\x00\x30\x03\x6F\x02\x00\x00\x00\x00\x67\x3B\x63\x00\x00\x00\x00\x00\x68\x03\x6F\x02\x00\x00\x00\x00\xE0\x81\x02\xB8\x8D\x7F\x00\x00\x30\x03\x6F\x02\x00\x00\x00\x00\xC3\x51\x00\x00\x00\x00\x80\x00\x00\x00\x80\x00\x00\x00\xA0\x00\x00\x00\xA0\x00\x00\x00\x00\x80\x00\x00\x80\x00\x00\x00\xA0\x00\x00\x04\x93\xE0\x00\x00\x61\xA8\x00\x00\x00\x0C\x00\x00\x00\x00";
-		unsigned char payloadBuffer[1024] = {};
-
-		memcpy(payloadBuffer, payload, 184);
-
-		PrintBytes((char*)payloadBuffer, 184);
-		return AuthServer::EncryptCWCPacket(clientInstance, payloadBuffer, 184);
+		// We could do work to actually check if their steam ticket was valid but effort
+		return FUNCTION_SUCCESS;
 	}
 
 	int SendPacket(authclient_t *clientInstance, char *payloadBuffer, int payloadLength) {

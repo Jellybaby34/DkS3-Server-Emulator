@@ -43,6 +43,7 @@ namespace AuthServer {
 
 		unsigned char unknown1[11]; // Unknown 11 bytes sent by server to client after receiving AES CWC. No fucking clue what they do or if they are even used.
 		unsigned char unknown2[16]; // Some kind of key that gets negotiated between a connecting client and the server. Likely related to steam ticket authorisation
+		unsigned char unknown3[9]; // 8 bytes used possibly as a token to connect the actual game server.
 
 		// details sent by connecting clients
 		char steamidstring[17];

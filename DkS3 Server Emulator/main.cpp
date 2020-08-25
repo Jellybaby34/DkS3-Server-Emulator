@@ -50,5 +50,6 @@ void StartServer()
 	Sleep(500);
 	threadPool.enqueue_work(AuthServer::Initialise);
 	Sleep(500);
-
+	threadPool.enqueue_work(GameServer::Initialise);
+	Sleep(500);
 }

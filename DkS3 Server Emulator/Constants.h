@@ -7,5 +7,6 @@
 #define SERVERIP "127.0.0.1"
 #define LOGINPORT 50050
 #define AUTHPORT 50000
+#define GAMEPORT 50001
 
 #endif

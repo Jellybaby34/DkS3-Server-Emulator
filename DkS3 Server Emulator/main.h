@@ -12,6 +12,7 @@
 #include "RSA.h"
 #include "Login.h"
 #include "Auth.h"
+#include "Game.h"
 
 #pragma comment (lib, "ws2_32.lib")
 
