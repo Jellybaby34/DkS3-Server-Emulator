@@ -25,7 +25,14 @@ namespace AuthServer {
 		HANDSHAKE = 3,
 		GET_SERVICE_STATUS = 4,
 		EXCHANGE_STEAM_TICKET = 5,
+		AUTHORISED = 6
 	};
+
+	typedef struct CwcInstance_t {
+		// Symmetrical encryption data
+		unsigned char aesCwcKey[17]; // 128 bit key + null terminator
+		cwc_ctx cwcCtx;
+	} CwcInstance_t;
 
 	typedef struct authclient_t {
 		// Various libevent variables we use
@@ -37,13 +44,11 @@ namespace AuthServer {
 		// Connection state
 		enum ConnectionStatus connectionstatus;
 
-		// Symmetrical encryption data
-		unsigned char aescwckey[17]; // 128 bit key + null terminator
-		cwc_ctx cwcctx;
+		struct CwcInstance_t *cwcInstance;
 
 		unsigned char unknown1[11]; // Unknown 11 bytes sent by server to client after receiving AES CWC. No fucking clue what they do or if they are even used.
 		unsigned char unknown2[16]; // Some kind of key that gets negotiated between a connecting client and the server. Likely related to steam ticket authorisation
-		unsigned char unknown3[9]; // 8 bytes used possibly as a token to connect the actual game server.
+		unsigned char gameSeverToken[9]; // 8 bytes used at the start of every UDP packet sent to the game server. ?some kind of ID token?
 
 		// details sent by connecting clients
 		char steamidstring[17];

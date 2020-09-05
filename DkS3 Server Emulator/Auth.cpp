@@ -1,4 +1,5 @@
 #include "Auth.h"
+#include "Game.h"
 
 namespace AuthServer {
 
@@ -79,9 +80,15 @@ namespace AuthServer {
 
 		if (events & (BEV_EVENT_EOF | BEV_EVENT_ERROR)) {
 			LOG_PRINT("[AuthServer::OnBuffereventArrive] Closing connection");
-			if (ctx != NULL) {
-				free((authclient_t*)ctx);
+			authclient_t *clientInstance = (authclient_t*)ctx;
+			if (clientInstance != NULL) {
+				if (clientInstance->cwcInstance != NULL && clientInstance->connectionstatus != ConnectionStatus::AUTHORISED) {
+					free(clientInstance->cwcInstance);
+					LOG_PRINT("[AuthServer::OnBuffereventArrive] Freed client CWC instance");
+				}
+				free(clientInstance);
 				LOG_PRINT("[AuthServer::OnBuffereventArrive] Freed client data struct");
+
 			}
 			bufferevent_free(bev);
 		}
@@ -159,17 +166,32 @@ namespace AuthServer {
 					return;
 				}
 
-				// A whole bunch of stack memory gets sent to the client :^)
 				unsigned char payloadBuffer[1024] = {};
-				GenerateRandomBytes(clientInstance->unknown3, 8);
+				GenerateRandomBytes(clientInstance->gameSeverToken, 8); 
+				memcpy(payloadBuffer, clientInstance->gameSeverToken, 8); // Might be used as a token to connect to the actual game server
+				strncpy((char*)&payloadBuffer[8], SERVERIP, strlen(SERVERIP)); // IP of the game server to connect to
 
-				memcpy(payloadBuffer, clientInstance->unknown3, 8);
-				strncpy((char*)&payloadBuffer[8], SERVERIP, strlen(SERVERIP));
+				// This contains what looks like memory from the master server but also tells the client what port to bind for UDP traffic.
+				// It also does other things related to heap allocation but I haven't looked at that and only know because a malformed
+				// packet crashes the client :^)
 				char *crap = "\x30\x1F\x07\x74\x9C\x7F\x00\x00\x78\x7C\x2B\x01\x00\x00\x00\x00\xE6\x0F\x58\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xFE\xEF\x57\x00\x00\x00\x00\x00\x30\x93\x77\x02\x00\x00\x00\x00\x64\xE8\x55\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x70\x00\xF9\x81\x9C\x7F\x00\x00\x30\x93\x77\x02\x00\x00\x00\x00\x27\x65\x63\x00\x00\x00\x00\x00\x68\x93\x77\x02\x00\x00\x00\x00\x30\x1F\x07\x74\x9C\x7F\x00\x00\x30\x93\x77\x02\x00\x00\x00\x00\xC3\x51\x00\x00\x00\x00\x80\x00\x00\x00\x80\x00\x00\x00\xA0\x00\x00\x00\xA0\x00\x00\x00\x00\x80\x00\x00\x80\x00\x00\x00\xA0\x00\x00\x04\x93\xE0\x00\x00\x61\xA8\x00\x00\x00\x0C\x00\x00\x00\x00";
 				memcpy(&payloadBuffer[24], crap, 161);
 				PrintBytes((char*)payloadBuffer, 184);
 
-				EncryptCWCPacket(clientInstance, payloadBuffer, 184);
+				GameServer::gameclient_t gameClientInstance;
+				gameClientInstance.sessionToken = *(unsigned long long*)&clientInstance->gameSeverToken;
+				gameClientInstance.timeSinceLastPacket = GetTickCount64();
+
+				static_assert(sizeof(AuthServer::CwcInstance_t) == sizeof(GameServer::CwcInstance_t));
+				gameClientInstance.cwcInstance = reinterpret_cast<GameServer::CwcInstance_t*>(clientInstance->cwcInstance);
+
+				GameServer::gameClientVector.push_back(gameClientInstance);
+//				GameServer::gameClientQueue.try_push(*gameClientInstance);
+
+				if (EncryptCWCPacket(clientInstance, payloadBuffer, 184) == FUNCTION_SUCCESS) {
+					clientInstance->connectionstatus = ConnectionStatus::AUTHORISED;
+				}
+				
 			}
 		}
 
@@ -246,8 +268,18 @@ namespace AuthServer {
 			return FUNCTION_ERROR;
 		}
 
-		strncpy((char*)clientInstance->aescwckey, pbRequestHandshake.aescwckey().c_str(), 16);
-		if (cwc_init_and_key(clientInstance->aescwckey, 16, &clientInstance->cwcctx) == FUNCTION_ERROR) {
+		// Create a heap allocated struct that contains the AES CWC key and the CWC instance.
+		// We do this because it gets used for the UDP game server traffic once a client
+		// connects to it.
+		CwcInstance_t *cwcInstance = (CwcInstance_t*)calloc(1, sizeof(CwcInstance_t));
+		if (cwcInstance == NULL) {
+			LOG_ERROR("[AuthServer::InitialiseCWCInstance] Failed to create AES CWC instance");
+			return FUNCTION_ERROR;
+		}
+		clientInstance->cwcInstance = cwcInstance;
+
+		strncpy((char*)cwcInstance->aesCwcKey, pbRequestHandshake.aescwckey().c_str(), 16);
+		if (cwc_init_and_key(cwcInstance->aesCwcKey, 16, &cwcInstance->cwcCtx) == FUNCTION_ERROR) {
 			LOG_ERROR("[AuthServer::InitialiseCWCInstance] Failed to initialise AES CWC context.");
 			return FUNCTION_ERROR;
 		}
@@ -278,7 +310,7 @@ namespace AuthServer {
 
 		GenerateRandomBytes(packetIV, 11);
 
-		if (cwc_encrypt_message(packetIV, 11, packetIV, 11, payloadBuffer, payloadLength, packetTag, 16, &clientInstance->cwcctx) == FUNCTION_ERROR) {
+		if (cwc_encrypt_message(packetIV, 11, packetIV, 11, payloadBuffer, payloadLength, packetTag, 16, &clientInstance->cwcInstance->cwcCtx) == FUNCTION_ERROR) {
 			LOG_ERROR("[AuthServer::EncryptCWCPacket] Failed to encrypt packet");
 			return FUNCTION_ERROR;
 		}
@@ -316,7 +348,7 @@ namespace AuthServer {
 //		PrintBytes((char*)packetTag, 16);
 //		PrintBytes((char*)decryptedPayloadBuffer, receivedDataLength - 27);
 
-		if (cwc_decrypt_message(packetIV, 11, packetIV, 11, decryptedPayloadBuffer, receivedDataLength - 27, packetTag, 16, &clientInstance->cwcctx) == FUNCTION_ERROR) {
+		if (cwc_decrypt_message(packetIV, 11, packetIV, 11, decryptedPayloadBuffer, receivedDataLength - 27, packetTag, 16, &clientInstance->cwcInstance->cwcCtx) == FUNCTION_ERROR) {
 			LOG_ERROR("[AuthServer::DecryptCWCPacket] Failed to decrypt packet");
 			return FUNCTION_ERROR;
 		}

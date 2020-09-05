@@ -7,42 +7,77 @@ namespace GameServer {
 	bool isInitialised;
 	struct event_base *gameEventBase;
 	struct evconnlistener *gameListener;
+	std::mutex mtxGameClientVector;
+	std::vector<gameclient_t> gameClientVector;
 
-	void deal_with_udp(evutil_socket_t fd) {
-		char buf[2048] = {};
+	// This is probably one huge race condition
+	// Please be gentle
+	void ProcessUdpPacket(evutil_socket_t fd, short event2, void *arg) {
+		unsigned char buf[2048] = {};
 		socklen_t size = sizeof(struct sockaddr);
 		struct sockaddr_in client_addr = { 0 };
-		int len = recvfrom(fd, buf, sizeof(buf), 0, (struct sockaddr *)&client_addr, &size);
+		int len = recvfrom(fd, (char*)buf, sizeof(buf), 0, (struct sockaddr *)&client_addr, &size);
 		if (len < 0) {
 			LOG_ERROR("server recv message error...!");
 			return;
 		}
-		if (0 == len) {
+		if (len == 0) {
 			LOG_ERROR("connection closed...!");
 		}
-		LOG_PRINT("connection port = %i", client_addr.sin_port);
-		LOG_PRINT("connection ip = %s", inet_ntoa(client_addr.sin_addr));
-		LOG_PRINT("server recv message len = %i", len);
-		LOG_PRINT("sever send back message now...!");
-		sendto(fd, buf, sizeof(buf), 0, (struct sockaddr *)&client_addr, size);
+
+		LOG_PRINT("Received UDP packet from %s:%i. len = %i", inet_ntoa(client_addr.sin_addr), client_addr.sin_port, len);
+		PrintBytes((char*)buf, len);
+
+		mtxGameClientVector.lock();
+		unsigned long long receivedSessionToken = *(unsigned long long*)&buf;
+		for (int i = 0; i < gameClientVector.size(); i++) {
+			if (gameClientVector[i].sessionToken == receivedSessionToken) {
+				LOG_PRINT("Token match");
+				gameClientVector[i].timeSinceLastPacket = GetTickCount64();
+
+			}
+		};
+		mtxGameClientVector.unlock();
+
+//		LOG_PRINT("sever send back message now...!");
+//		sendto(fd, buf, sizeof(buf), 0, (struct sockaddr *)&client_addr, size);
 	}
 
-	void udp_cb(evutil_socket_t fd, short event, void *arg) {
-		LOG_ERROR("Test");
-		threadPool.enqueue_work(deal_with_udp, fd);
+	void UdpReadCb(evutil_socket_t fd, short event2, void *arg) {
+		LOG_ERROR("UDP read callback triggered");
+		threadPool.enqueue_work(ProcessUdpPacket, (evutil_socket_t)fd, (short)NULL, (void*)NULL);
+	}
+
+	void PruneDeadConnections(evutil_socket_t fd, short event2, void *arg) {
+		mtxGameClientVector.lock();
+		unsigned long long currentTime = GetTickCount64();
+		for (int i = 0; i < gameClientVector.size(); i++) {
+			if (currentTime - gameClientVector[i].timeSinceLastPacket >= 15000) {
+				LOG_PRINT("Dead connection");
+				if (gameClientVector[i].cwcInstance)
+					free(gameClientVector[i].cwcInstance);
+				gameClientVector.erase(gameClientVector.begin() + i);
+			}
+		};
+		mtxGameClientVector.unlock();
+	}
+
+	void UdpTimeoutCb(evutil_socket_t fd, short event2, void *arg) {
+		LOG_ERROR("Timeout callback triggered");
+		threadPool.enqueue_work(PruneDeadConnections, (evutil_socket_t)fd, (short)NULL, (void*)NULL);
 	}
 
 	void Initialise() {
 
 		if (isInitialised) {
-			LOG_ERROR("[LoginServer::Initialise] Tried to re-initialise the login server");
+			LOG_ERROR("[GameServer::Initialise] Tried to re-initialise the game server");
 			return;
 		}
 
-		LOG_PRINT("[LoginServer::Initialise] Starting LoginServer instance");
+		LOG_PRINT("[GameServer::Initialise] Starting GameServer instance");
 		gameEventBase = event_base_new();
 		if (gameEventBase == NULL) {
-			LOG_ERROR("[LoginServer::Initialise] Couldn't create new event base");
+			LOG_ERROR("[GameServer::Initialise] Couldn't create new event base");
 			return;
 		}
 
@@ -61,15 +96,18 @@ namespace GameServer {
 
 		isInitialised = true;
 
-//		event_base_dispatch(gameEventBase);
+		struct timeval tv;
+		tv.tv_sec = 15;
+		tv.tv_usec = 0;
 
-		
-		/* Add the UDP event */
-		event *testing = event_new(gameEventBase, sock, EV_READ | EV_PERSIST, udp_cb, NULL);
-		event_add(testing, NULL);
+		event *udpTimeout = event_new(gameEventBase, sock, EV_TIMEOUT | EV_PERSIST, UdpTimeoutCb, NULL);
+		event_add(udpTimeout, &tv);
+		event *udpReadEvent = event_new(gameEventBase, sock, EV_READ | EV_PERSIST, UdpReadCb, NULL);
+		event_add(udpReadEvent, NULL);
 
-		/* Enter the event loop; does not return. */
+		gameClientVector.reserve(10000);
+
 		event_base_dispatch(gameEventBase);
-//		close(sock);
+
 	}
 }
